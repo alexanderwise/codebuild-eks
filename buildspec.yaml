@@ -1,0 +1,33 @@
+version: 0.2
+
+env:
+  variables:
+  parameter-store:
+
+phases:
+  install:
+# Download and install necessary utilities
+    commands:
+      - apt update
+      - apt install moreutils jq -y 
+# Download and compile latest version of Packer
+      - echo "Installing Packer..."
+      - mkdir -p $(go env GOPATH)/src/github.com/hashicorp && cd $_
+      - git clone https://github.com/hashicorp/packer.git
+      - cd packer
+      - make dev
+      - export PATH=$PATH:$(pwd)
+  pre-build:
+# Clone the amazon-eks-ami repository
+    commands:
+      - cd /
+      - git clone https://github.com/awslabs/amazon-eks-ami.git
+      - git clone https://github.com/alexanderwise/packer-gib.git
+      - cp -r ./packer-gib/ansible/ ./amazon-eks-ami
+# Remove the AWS authentication variables (Runs as role)
+      - jq 'del(.variables.aws_access_key_id,.variables.aws_secret_access_key,.variables.aws_session_token)' amazon-eks-ami/eks-worker-al2.json | sponge amazon-eks-ami/eks-worker-al2.json
+# Add the environment-specific info from CodeBuild
+      - jq '.variables += {"aws_region": "{{env `AWS_REGION`}}", "vpc": "{{env `BUILD_VPC_ID`}}", "subnet": "{{env `BUILD_SUBNET_ID`}}"}' amazon-eks-ami/eks-worker-al2.json | sponge amazon-eks-ami/eks-worker-al2.json
+# Replace the .provisioners section of eks-worker-al2.json with packer-cis-eks
+      - sed '/  "provisioners":/,$d' ./amazon-eks-ami/eks-worker-al2.json | sponge ./amazon-eks-ami/eks-worker-al2.json
+      - cat ./amazon-eks-ami/eks-worker-al2.json ./packer-gib/packer-cis-eks | sponge ./amazon-eks-ami/eks-worker-al2.json
